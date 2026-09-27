@@ -11,17 +11,18 @@ const io = new Server(server, {
 app.use(express.static('public'));
 
 io.on('connection', (socket) => {
-  // Join a room for 1-to-1 connection
   socket.on('join-room', (roomId) => {
     socket.join(roomId);
     socket.to(roomId).emit('user-connected');
   });
 
-  // Relay WebRTC signals
   socket.on('signal', (data) => {
     socket.to(data.roomId).emit('signal', data.signal);
   });
 });
 
+// Dynamic PORT handle karein Koyeb ke liye
 const PORT = process.env.PORT || 8080;
-server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`Server is running on port ${PORT}`);
+});

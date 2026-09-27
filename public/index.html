@@ -2,49 +2,131 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>P2P Offline File Share</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>QR P2P Offline File Share</title>
+
+  <!-- External Libraries -->
   <script src="/socket.io/socket.io.js"></script>
+  <!-- QR Code Generator -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <!-- QR Code Camera Scanner -->
+  <script src="https://unpkg.com/html5-qrcode"></script>
+
+  <style>
+    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; text-align: center; background: #f4f6f9; margin: 0; padding: 20px; }
+    .card { max-width: 450px; margin: auto; background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+    .btn-group { display: flex; gap: 10px; margin-bottom: 20px; }
+    .btn { flex: 1; padding: 12px; font-size: 16px; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; }
+    .btn-send { background: #28a745; color: white; }
+    .btn-receive { background: #007bff; color: white; }
+    .status-box { background: #e9ecef; padding: 10px; border-radius: 6px; font-weight: 500; margin: 15px 0; font-size: 14px; }
+    #qrcode { display: flex; justify-content: center; margin: 15px 0; }
+    #reader { width: 100%; margin-top: 15px; border-radius: 8px; overflow: hidden; }
+    input[type="file"] { margin: 15px 0; }
+    .download-btn { display: inline-block; padding: 10px 20px; background: #17a2b8; color: white; text-decoration: none; border-radius: 6px; margin-top: 10px; font-weight: bold; }
+  </style>
 </head>
-<body style="font-family: sans-serif; padding: 20px;">
-  <h2>P2P File Transfer (Local Wi-Fi)</h2>
-  
-  <input type="text" id="roomInput" placeholder="Enter Room Code (e.g. 1234)">
-  <button onclick="joinRoom()">Connect</button>
-  <p id="status">Status: Disconnected</p>
+<body>
 
-  <hr>
+  <div class="card">
+    <h2>ShareIt Web P2P</h2>
 
-  <input type="file" id="fileInput" disabled>
-  <button id="sendBtn" onclick="sendFile()" disabled>Send File</button>
+    <!-- Mode Selector -->
+    <div class="btn-group">
+      <button class="btn btn-send" onclick="startSender()">📤 SEND</button>
+      <button class="btn btn-receive" onclick="startReceiver()">📥 RECEIVE</button>
+    </div>
 
-  <h3>Received File:</h3>
-  <a id="downloadLink" style="display:none;" download>Download File</a>
+    <div id="status" class="status-box">Mode Select Karein (Send ya Receive)</div>
+
+    <!-- SENDER SECTION -->
+    <div id="senderSection" style="display:none;">
+      <p><b>Receiver ko ye QR Scan karne kahein:</b></p>
+      <div id="qrcode"></div>
+    </div>
+
+    <!-- RECEIVER SECTION -->
+    <div id="receiverSection" style="display:none;">
+      <p><b>Sender ka QR Code Scan karein:</b></p>
+      <div id="reader"></div>
+    </div>
+
+    <!-- FILE TRANSFER SECTION -->
+    <div id="transferSection" style="display:none; border-top: 1px solid #ccc; padding-top: 15px;">
+      <h3>Connected!</h3>
+      <p style="color: red; font-size: 12px;"><b>Ab aap Mobile Data Off kar sakte hain!</b> (Wi-Fi ON rakhein)</p>
+      
+      <input type="file" id="fileInput">
+      <br>
+      <button class="btn btn-send" onclick="sendFile()">Send Selected File</button>
+
+      <h4>Received Files:</h4>
+      <a id="downloadLink" class="download-btn" style="display:none;" download>Download File</a>
+    </div>
+  </div>
 
   <script>
     const socket = io();
     let peerConnection;
     let dataChannel;
-    let roomId;
+    let currentRoomId = "";
+    let html5QrcodeScanner;
     let receivedBuffers = [];
 
     const config = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 
-    function joinRoom() {
-      roomId = document.getElementById('roomInput').value;
-      if (!roomId) return alert("Enter Room Code");
-      socket.emit('join-room', roomId);
-      document.getElementById('status').innerText = "Status: Waiting for peer...";
+    // Generate Random Room ID
+    function generateRoomId() {
+      return Math.random().toString(36).substring(2, 8).toUpperCase();
     }
 
+    // --- SENDER MODE ---
+    function startSender() {
+      resetUI();
+      currentRoomId = generateRoomId();
+      document.getElementById('senderSection').style.display = 'block';
+      document.getElementById('status').innerText = "QR Code generate ho gaya. Scan ka wait kar rahe hain...";
+
+      // Generate QR Code
+      document.getElementById('qrcode').innerHTML = "";
+      new QRCode(document.getElementById("qrcode"), {
+        text: currentRoomId,
+        width: 180,
+        height: 180
+      });
+
+      socket.emit('join-room', currentRoomId);
+    }
+
+    // --- RECEIVER MODE ---
+    function startReceiver() {
+      resetUI();
+      document.getElementById('receiverSection').style.display = 'block';
+      document.getElementById('status').innerText = "Camera On ho raha hai... QR Scan karein.";
+
+      html5QrcodeScanner = new Html5QrcodeScanner("reader", { fps: 10, qrbox: 220 });
+      html5QrcodeScanner.render((scannedRoomId) => {
+        // QR Code Scanned Successfully
+        html5QrcodeScanner.clear();
+        currentRoomId = scannedRoomId;
+        document.getElementById('receiverSection').style.display = 'none';
+        document.getElementById('status').innerText = "QR Scanned! Room: " + currentRoomId + " - Connecting...";
+        
+        socket.emit('join-room', currentRoomId);
+      });
+    }
+
+    // --- WEBRTC SIGNALING ---
     socket.on('user-connected', async () => {
-      document.getElementById('status').innerText = "Peer connected! Initializing WebRTC...";
+      document.getElementById('status').innerText = "Device mil gaya! Peer Connection ban raha hai...";
       createPeerConnection();
+      
       dataChannel = peerConnection.createDataChannel("fileTransfer");
       setupDataChannel();
 
       const offer = await peerConnection.createOffer();
       await peerConnection.setLocalDescription(offer);
-      socket.emit('signal', { roomId, signal: offer });
+      socket.emit('signal', { roomId: currentRoomId, signal: offer });
     });
 
     socket.on('signal', async (signal) => {
@@ -54,7 +136,7 @@
         await peerConnection.setRemoteDescription(signal);
         const answer = await peerConnection.createAnswer();
         await peerConnection.setLocalDescription(answer);
-        socket.emit('signal', { roomId, signal: answer });
+        socket.emit('signal', { roomId: currentRoomId, signal: answer });
       } else if (signal.type === 'answer') {
         await peerConnection.setRemoteDescription(signal);
       } else if (signal.candidate) {
@@ -67,7 +149,7 @@
 
       peerConnection.onicecandidate = (event) => {
         if (event.candidate) {
-          socket.emit('signal', { roomId, signal: { candidate: event.candidate } });
+          socket.emit('signal', { roomId: currentRoomId, signal: { candidate: event.candidate } });
         }
       };
 
@@ -79,9 +161,10 @@
 
     function setupDataChannel() {
       dataChannel.onopen = () => {
-        document.getElementById('status').innerText = "CONNECTED! You can now turn OFF mobile data (Keep Wi-Fi ON).";
-        document.getElementById('fileInput').disabled = false;
-        document.getElementById('sendBtn').disabled = false;
+        document.getElementById('status').innerText = "SUCCESSFULLY CONNECTED!";
+        document.getElementById('senderSection').style.display = 'none';
+        document.getElementById('receiverSection').style.display = 'none';
+        document.getElementById('transferSection').style.display = 'block';
       };
 
       dataChannel.onmessage = (event) => {
@@ -90,21 +173,31 @@
         const url = URL.createObjectURL(blob);
         const link = document.getElementById('downloadLink');
         link.href = url;
-        link.innerText = "Click to Download Received File";
-        link.style.display = "block";
+        link.innerText = "📥 Download File Now";
+        link.style.display = "inline-block";
       };
     }
 
+    // --- SEND FILE ---
     function sendFile() {
       const file = document.getElementById('fileInput').files[0];
-      if (!file) return alert("Select a file");
+      if (!file) return alert("Pehle file choose karein!");
       
+      document.getElementById('status').innerText = "Sending file: " + file.name + "...";
       const reader = new FileReader();
       reader.onload = () => {
         dataChannel.send(reader.result);
+        document.getElementById('status').innerText = "File Bhej Di Gayi!";
         alert("File Sent Successfully!");
       };
       reader.readAsArrayBuffer(file);
+    }
+
+    function resetUI() {
+      document.getElementById('senderSection').style.display = 'none';
+      document.getElementById('receiverSection').style.display = 'none';
+      document.getElementById('transferSection').style.display = 'none';
+      if(html5QrcodeScanner) html5QrcodeScanner.clear();
     }
   </script>
 </body>

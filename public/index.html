@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>P2P Offline File Share</title>
+  <script src="/socket.io/socket.io.js"></script>
+</head>
+<body style="font-family: sans-serif; padding: 20px;">
+  <h2>P2P File Transfer (Local Wi-Fi)</h2>
+  
+  <input type="text" id="roomInput" placeholder="Enter Room Code (e.g. 1234)">
+  <button onclick="joinRoom()">Connect</button>
+  <p id="status">Status: Disconnected</p>
+
+  <hr>
+
+  <input type="file" id="fileInput" disabled>
+  <button id="sendBtn" onclick="sendFile()" disabled>Send File</button>
+
+  <h3>Received File:</h3>
+  <a id="downloadLink" style="display:none;" download>Download File</a>
+
+  <script>
+    const socket = io();
+    let peerConnection;
+    let dataChannel;
+    let roomId;
+    let receivedBuffers = [];
+
+    const config = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+
+    function joinRoom() {
+      roomId = document.getElementById('roomInput').value;
+      if (!roomId) return alert("Enter Room Code");
+      socket.emit('join-room', roomId);
+      document.getElementById('status').innerText = "Status: Waiting for peer...";
+    }
+
+    socket.on('user-connected', async () => {
+      document.getElementById('status').innerText = "Peer connected! Initializing WebRTC...";
+      createPeerConnection();
+      dataChannel = peerConnection.createDataChannel("fileTransfer");
+      setupDataChannel();
+
+      const offer = await peerConnection.createOffer();
+      await peerConnection.setLocalDescription(offer);
+      socket.emit('signal', { roomId, signal: offer });
+    });
+
+    socket.on('signal', async (signal) => {
+      if (!peerConnection) createPeerConnection();
+
+      if (signal.type === 'offer') {
+        await peerConnection.setRemoteDescription(signal);
+        const answer = await peerConnection.createAnswer();
+        await peerConnection.setLocalDescription(answer);
+        socket.emit('signal', { roomId, signal: answer });
+      } else if (signal.type === 'answer') {
+        await peerConnection.setRemoteDescription(signal);
+      } else if (signal.candidate) {
+        await peerConnection.addIceCandidate(signal.candidate);
+      }
+    });
+
+    function createPeerConnection() {
+      peerConnection = new RTCPeerConnection(config);
+
+      peerConnection.onicecandidate = (event) => {
+        if (event.candidate) {
+          socket.emit('signal', { roomId, signal: { candidate: event.candidate } });
+        }
+      };
+
+      peerConnection.ondatachannel = (event) => {
+        dataChannel = event.channel;
+        setupDataChannel();
+      };
+    }
+
+    function setupDataChannel() {
+      dataChannel.onopen = () => {
+        document.getElementById('status').innerText = "CONNECTED! You can now turn OFF mobile data (Keep Wi-Fi ON).";
+        document.getElementById('fileInput').disabled = false;
+        document.getElementById('sendBtn').disabled = false;
+      };
+
+      dataChannel.onmessage = (event) => {
+        receivedBuffers.push(event.data);
+        const blob = new Blob(receivedBuffers);
+        const url = URL.createObjectURL(blob);
+        const link = document.getElementById('downloadLink');
+        link.href = url;
+        link.innerText = "Click to Download Received File";
+        link.style.display = "block";
+      };
+    }
+
+    function sendFile() {
+      const file = document.getElementById('fileInput').files[0];
+      if (!file) return alert("Select a file");
+      
+      const reader = new FileReader();
+      reader.onload = () => {
+        dataChannel.send(reader.result);
+        alert("File Sent Successfully!");
+      };
+      reader.readAsArrayBuffer(file);
+    }
+  </script>
+</body>
+</html>
